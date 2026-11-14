@@ -1,0 +1,51 @@
+# Cuts a GitHub release on request: Actions > Release > Run workflow (or `actions_run_trigger` from Claude).
+# The release has MHbS.js attached, plus the whole script in a fenced code block in the notes (GitHub shows a copy
+# button on it) for one-click paste into Tampermonkey/Greasemonkey. GitHub caps a release body at 125,000
+# characters; if the script outgrows that, the notes link to dist/MHbS.copy.md at the tag instead, which renders
+# the same copy button.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: 'What changed (one or two lines, shown at the top of the release)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check dist is current
+        run: npm run check
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists. Bump \"version\" in package.json, rebuild, push, and run again." >&2
+            exit 1
+          fi
+          COPY_URL="https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/dist/MHbS.copy.md"
+          {
+            if [ -n "$NOTES" ]; then printf '%s\n\n' "$NOTES"; fi
+            printf 'Install: copy the script below (use the copy button on the code block), then in Tampermonkey choose Create a new script, select all, paste and save. Or download the attached MHbS.js. Disable the old standalone scripts first.\n\n'
+            printf 'Copy page: %s\n\n' "$COPY_URL"
+            if [ "$(wc -c < dist/MHbS.js)" -lt 115000 ]; then
+              printf '````js\n'
+              cat dist/MHbS.js
+              printf '````\n'
+            fi
+          } > notes.md
+          gh release create "$TAG" dist/MHbS.js --target "$GITHUB_SHA" --title "MHbS $TAG" --notes-file notes.md

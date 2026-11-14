@@ -4,7 +4,7 @@ One userscript for [MouseHunt](https://www.mousehuntgame.com), grown a module at
 
 ## Install
 
-Install `dist/mousehunt-super.user.js` in Tampermonkey (open the raw file, or paste it in). It pulls in Tesseract.js 4.0.2 from jsDelivr through `@require` for the King's Reward solver.
+Install `dist/MHbS.js` in Tampermonkey. Raw `.js` links don't trigger an install prompt, so paste it in: open [`dist/MHbS.copy.md`](dist/MHbS.copy.md) and use the copy button on the code block (releases have the same). It pulls in Tesseract.js 4.0.2 from jsDelivr through `@require` for the King's Reward solver.
 
 **Disable the old standalone scripts first** (Loot Log & Gift Links, Auto Horn & KR Solver, School of Sorcery Auto-Swap). Run together with this one they would sound the horn and draw their menus twice. The control panel warns if it spots them.
 
@@ -19,13 +19,17 @@ Install `dist/mousehunt-super.user.js` in Tampermonkey (open the raw file, or pa
 
 Open the control panel with the **MH** button at the bottom right of the game. Each module has an on/off switch, a status line, its own settings and buttons. Everything saves on change and applies immediately, no reload. The old Auto Horn settings are copied over the first time the new script runs.
 
+## Releases
+
+On request: bump `version` in `package.json`, run `npm run build`, push to `main`, then run the **Release** workflow (Actions tab, or ask Claude). It creates tag `v<version>` with `MHbS.js` attached and the whole script in the release notes in a code block with a copy button, for one-click paste into Tampermonkey or Greasemonkey. `dist/MHbS.copy.md` is the same thing as a page, and the notes link to it once the script is too big for a release body.
+
 ## Layout
 
 ```
 src/meta.txt            userscript header
 src/core/               framework: settings, module registry, game helpers, control panel, boot
 src/modules/            one file per feature
-dist/                   built script (committed, this is what you install)
+dist/                   built script MHbS.js and MHbS.copy.md (committed, this is what you install)
 build.mjs               concatenates src/ into dist/ (no dependencies)
 test/smoke.mjs          headless-browser check against a stubbed game page
 ```

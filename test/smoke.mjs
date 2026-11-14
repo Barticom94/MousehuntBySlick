@@ -8,7 +8,7 @@ const require = createRequire(import.meta.url);
 let chromium;
 try { ({ chromium } = require('playwright')); } catch { ({ chromium } = require(`${process.env.NODE_PATH || '/usr/lib/node_modules'}/playwright`)); }
 
-const script = readFileSync(new URL('../dist/mousehunt-super.user.js', import.meta.url), 'utf8');
+const script = readFileSync(new URL('../dist/MHbS.js', import.meta.url), 'utf8');
 
 const PAGE = `<!doctype html><html><body>
 <div class="mousehuntHeaderView-gameTabs"><div class="mousehuntHeaderView-dropdownContainer"></div></div>

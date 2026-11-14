@@ -14,8 +14,8 @@
 // @run-at       document-end
 // @grant        none
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/Barticom94/MousehuntBySlick/main/dist/mousehunt-super.user.js
-// @updateURL    https://raw.githubusercontent.com/Barticom94/MousehuntBySlick/main/dist/mousehunt-super.user.js
+// @downloadURL  https://raw.githubusercontent.com/Barticom94/MousehuntBySlick/main/dist/MHbS.js
+// @updateURL    https://raw.githubusercontent.com/Barticom94/MousehuntBySlick/main/dist/MHbS.js
 // ==/UserScript==
 
 (function () {
