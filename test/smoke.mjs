@@ -65,9 +65,9 @@ await load();
 
 // 1. Panel and modules
 await panel('.launcher').click();
-assert.equal(await panel('.card').count(), 3);
-assert.deepEqual(await panel('.switch').evaluateAll((els) => els.map((e) => e.getAttribute('aria-checked'))), ['true', 'true', 'true']);
-step('panel lists three modules, all on');
+assert.equal(await panel('.card').count(), 4);
+assert.deepEqual(await panel('.switch').evaluateAll((els) => els.map((e) => e.getAttribute('aria-checked'))), ['true', 'true', 'true', 'true']);
+step('panel lists four modules, all on');
 
 // 2. Migrated horn settings
 await panel('[data-mod=auto-horn] summary').click();
@@ -132,6 +132,26 @@ await page.addScriptTag({ content: script });
 await panel('.launcher').click();
 assert.match(await panel('[data-status=loot-log]').textContent(), /MouseHunt globals not found/);
 step('modules degrade gracefully without game globals');
+
+// 9a. School of Sorcery: arms the saved setup for the current power type, then does nothing once it matches
+await page.route('https://www.mousehuntgame.com/sos', (r) => r.fulfill({ contentType: 'text/html', body: PAGE.replace('<div id="mousehuntContainer">', '<div id="hudLocationContent"></div><div id="mousehuntContainer">') }));
+await page.goto('https://www.mousehuntgame.com/sos');
+await page.evaluate(GAME_STUBS);
+await page.evaluate(() => {
+  localStorage.removeItem('mhs-settings-v1');
+  localStorage.setItem('mh-sos-autoswap', JSON.stringify({ enabled: true, swapBait: false, setups: {
+    arcane: { weapon: { id: 1, name: 'Arc Trap' }, base: { id: 2, name: 'Arc Base' }, trinket: null, bait: { id: 9, name: 'Cheese' } },
+    shadow: null } }));
+  Object.assign(window.user, { environment_type: 'school_of_sorcery', weapon_item_id: 5, base_item_id: 2, trinket_item_id: 0, bait_item_id: 8,
+    quests: { QuestSchoolOfSorcery: { in_course: true, current_course: { course_type: 'arcane_101_course', power_type: 'arcane', course_name: 'Arcane Arts' } } } });
+  window.__armed = [];
+  window.hg.utils.TrapControl = { armItem: (id, slot) => window.__armed.push([id, slot]), go: (ok) => ok() };
+});
+await page.addScriptTag({ content: script });
+await page.waitForFunction(() => window.__armed.length > 0, null, { timeout: 5000 });
+assert.deepEqual(await page.evaluate(() => window.__armed), [[1, 'weapon']]); // base already matches, cheese swap is off
+assert.match(await page.locator('#mh-sos-autoswap').textContent(), /Arc Trap/);
+step('School of Sorcery arms only what differs and shows its panel');
 
 // 9. King's Reward: OCR result is typed in and submitted, then the page reloads
 const KR_PAGE = PAGE.replace('<div id="mousehuntContainer">', `<div id="mousehuntContainer"><div class="puzzleView--active"><div class="puzzleView__image"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></div>

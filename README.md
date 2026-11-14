@@ -6,7 +6,7 @@ One userscript for [MouseHunt](https://www.mousehuntgame.com), grown a module at
 
 Install `dist/mousehunt-super.user.js` in Tampermonkey (open the raw file, or paste it in). It pulls in Tesseract.js 4.0.2 from jsDelivr through `@require` for the King's Reward solver.
 
-**Disable the old standalone scripts first** (Loot Log & Gift Links, Auto Horn & KR Solver). Run together with this one they would sound the horn and draw their menus twice. The control panel warns if it spots them.
+**Disable the old standalone scripts first** (Loot Log & Gift Links, Auto Horn & KR Solver, School of Sorcery Auto-Swap). Run together with this one they would sound the horn and draw their menus twice. The control panel warns if it spots them.
 
 ## What's in it
 
@@ -14,6 +14,7 @@ Install `dist/mousehunt-super.user.js` in Tampermonkey (open the raw file, or pa
 | --- | --- | --- |
 | Auto Horn & KR Solver | Sounds the horn when ready (random delay), OCR-solves King's Reward, refreshes the page periodically | Slick's fork 0.6.1 of [daniellok's script](https://github.com/daniellok/mousehunt-auto-kr) (MIT) |
 | Loot Log | Journal log in IndexedDB, loot and value (Markethunt) over 24H / 3D / 7D / 30D / All | Loot Log & Gift Links 1.3.1 |
+| School of Sorcery Auto-Swap | Arms your saved Arcane or Shadow setup to match the current course, including the Final Exam flip. Save setups from the panel it adds below the location HUD. Cheese swap is a setting, off by default | School of Sorcery Auto-Swap 1.0.0 (mock-only, not live-verified) |
 | Gift Links | Pill with the claimable MH Improved gift links and one-click Claim all | Loot Log & Gift Links 1.3.1 |
 
 Open the control panel with the **MH** button at the bottom right of the game. Each module has an on/off switch, a status line, its own settings and buttons. Everything saves on change and applies immediately, no reload. The old Auto Horn settings are copied over the first time the new script runs.

@@ -14,4 +14,5 @@ Behaviour changes versus the standalone scripts, all small:
 - Auto Horn: errors inside the loop are reported and retried after 5 s (the old loop died silently); the Tesseract worker is released after each attempt; the "attempt n/3" text and the failure alert use the configured retry limit.
 - Auto Horn: new "Solve King's Reward automatically" switch (default on). Off pauses the horn while a puzzle is up.
 - Tesseract.js comes from `@require` (4.0.2, the same version the old script bundled) instead of being inlined.
+- School of Sorcery Auto-Swap added as a module (v1.0.0 source, saved setups and options carried over; the in-page enable/cheese checkboxes moved to the control panel). Its XHR hook is patched once and forwards to the running instance.
 - Loot Log and Gift Links are separate modules; the Loot Log API on `window.mhLootLog` is unchanged.
