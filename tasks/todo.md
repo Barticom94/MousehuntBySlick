@@ -16,3 +16,12 @@ Behaviour changes versus the standalone scripts, all small:
 - Tesseract.js comes from `@require` (4.0.2, the same version the old script bundled) instead of being inlined.
 - School of Sorcery Auto-Swap added as a module (v1.0.0 source, saved setups and options carried over; the in-page enable/cheese checkboxes moved to the control panel). Its XHR hook is patched once and forwards to the running instance.
 - Loot Log and Gift Links are separate modules; the Loot Log API on `window.mhLootLog` is unchanged.
+
+
+# Daily Gifting module
+
+- [x] Module `src/modules/daily-gifting.js`: aggregate claim list, accept-only, send Gift of the Day to non-senders, history-based friend picking
+- [x] Selectors taken from the live dialog via read-only inspection (Chrome, 14 Nov 2026); parser run against the real dialog: counts, snuids, timer, limits all read correctly
+- [x] Mock test for the claim and send flow, and for the pure friend-picking logic
+- [ ] Live: the final send confirm (Select Gifts > Confirm) and the first real Claim & send run, by Adam
+- [ ] Friend last-active: the game's tiles carry no activity data; only used if MH Improved's "last active" sort link is present

@@ -16,6 +16,7 @@ Install `dist/MHbS.js` in Tampermonkey. Raw `.js` links don't trigger an install
 | Loot Log | Journal log in IndexedDB, loot and value (Markethunt) over 24H / 3D / 7D / 30D / All | Loot Log & Gift Links 1.3.1 |
 | School of Sorcery Auto-Swap | Arms your saved Arcane or Shadow setup to match the current course, including the Final Exam flip. Save setups from the panel it adds below the location HUD. Cheese swap is a setting, off by default | School of Sorcery Auto-Swap 1.0.0 (mock-only, not live-verified) |
 | Gift Links | Pill with the claimable MH Improved gift links and one-click Claim all | Loot Log & Gift Links 1.3.1 |
+| Daily Gifting | In the game's Claim Free Gifts tab: waiting gifts grouped by type (no senders), accept (never return) up to your daily limit, then send the Gift of the Day to friends who haven't sent you one today, favouring friends who return gifts, send regularly and were recently active | New. Claim side read from the live dialog, send confirm step not live-verified |
 
 Open the control panel with the **MH** button at the bottom right of the game. Each module has an on/off switch, a status line, its own settings and buttons. Everything saves on change and applies immediately, no reload. The old Auto Horn settings are copied over the first time the new script runs.
 
