@@ -1,6 +1,6 @@
 {
   "name": "mousehunt-super-script",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "MouseHunt userscript built from modules in src/. No dependencies.",
   "license": "MIT",

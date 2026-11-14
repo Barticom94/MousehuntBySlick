@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MouseHunt Super Script
 // @namespace    adamh-mousehunt
-// @version      1.0.0
+// @version      1.1.0
 // @description  One script for MouseHunt with a control panel: Auto Horn & King's Reward solver, Loot Log, Gift Links. Built from modules in src/.
 // @author       Adam Harley (Auto Horn & KR Solver: Slick, fork of daniellok)
 // @license      MIT
@@ -24,7 +24,7 @@
 // ---- core/10-util.js ----
 // Small helpers shared by the core and every module. Core files share one scope; module files are block-scoped.
 
-const MH_VERSION = '1.0.0'; // replaced by build.mjs from package.json
+const MH_VERSION = '1.1.0'; // replaced by build.mjs from package.json
 
 const DAY = 864e5;
 const MIN = 6e4;
