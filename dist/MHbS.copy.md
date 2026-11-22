@@ -1,4 +1,4 @@
-# MHbS.js v1.2.1
+# MHbS.js v1.2.2
 
 Use the copy button on the code block, then in Tampermonkey: Create a new script, select all, paste, save.
 
@@ -6,7 +6,7 @@ Use the copy button on the code block, then in Tampermonkey: Create a new script
 // ==UserScript==
 // @name         MouseHunt Super Script
 // @namespace    adamh-mousehunt
-// @version      1.2.1
+// @version      1.2.2
 // @description  One script for MouseHunt with a control panel: Auto Horn & King's Reward solver, Loot Log, Gift Links, Map Invites. Built from modules in src/.
 // @author       Adam Harley (Auto Horn & KR Solver: Slick, fork of daniellok)
 // @license      MIT
@@ -29,7 +29,7 @@ Use the copy button on the code block, then in Tampermonkey: Create a new script
 // ---- core/10-util.js ----
 // Small helpers shared by the core and every module. Core files share one scope; module files are block-scoped.
 
-const MH_VERSION = '1.2.1'; // replaced by build.mjs from package.json
+const MH_VERSION = '1.2.2'; // replaced by build.mjs from package.json
 
 const DAY = 864e5;
 const MIN = 6e4;
@@ -637,6 +637,7 @@ const Panel = (() => {
 // One-click daily gifting from the game's own gifts dialog (Gifts menu > View More Gifts):
 //   1. shows what is waiting grouped by gift type (no senders) with a count to claim per type;
 //   2. ACCEPTS those gifts (never "and Return") up to the daily claim limit, by selecting them with the game's own Accept buttons and confirming once (one batch request);
+//   Claiming and sending go straight to the game's gift endpoint as one request, so nothing is clicked and the dialog doesn't move.
 //   3. sends the gift of the day to friends who have NOT already sent you a gift today (they can't return one), favouring
 //      friends who have returned gifts, send regularly, and were active recently.
 //
@@ -792,7 +793,6 @@ const Panel = (() => {
     settings: [
       { key: 'hideSenders', type: 'checkbox', label: 'Hide the sender list on the Claim tab', default: true },
       { key: 'fillOrder', type: 'select', label: 'When the claim limit is short, claim first', default: 'value', options: [{ value: 'value', label: 'Most valuable type (Markethunt)' }, { value: 'plenty', label: 'Type with the most gifts' }, { value: 'oldest', label: 'Type with the oldest gift' }] },
-      { key: 'sendAfterClaim', type: 'checkbox', label: 'Send gifts straight after claiming', default: true },
       { key: 'smartPick', type: 'checkbox', label: 'Choose friends by past returns and activity, not just at random', default: true },
       { key: 'explorePct', type: 'number', label: 'Share of sends that stay random', unit: '%', min: 0, max: 100, default: 20 },
     ],
@@ -824,7 +824,6 @@ const Panel = (() => {
       };
 
       const dialog = () => document.querySelector(`.${V}Popup`);
-      const visible = (el) => Boolean(el && el.offsetParent);
       const waitFor = async (fn, ms = 8000, step = 150) => { const end = Date.now() + ms; while (Date.now() < end && ctx.alive()) { const v = fn(); if (v) return v; await sleep(step); } return null; };
 
       const record = (parsed) => {
@@ -862,94 +861,97 @@ const Panel = (() => {
       };
       const redraw = () => { const p = document.getElementById('mhgd-panel'); if (p) p.dataset.sig = ''; const r = dialog(); if (r) draw(r); };
 
-      const wanted = () => Object.fromEntries([...document.querySelectorAll('#mhgd-panel input[data-type]')].map((i) => [i.dataset.type, Math.max(0, parseInt(i.value, 10) || 0)]));
+      const panelWanted = () => Object.fromEntries([...document.querySelectorAll('#mhgd-panel input[data-type]')].map((i) => [i.dataset.type, Math.max(0, parseInt(i.value, 10) || 0)]));
 
-      // Claiming is two steps in the game: each Accept only SELECTS the gift (it is queued in the dialog), and nothing is claimed
-      // until the confirm button ("Select Gifts" > Confirm) sends the whole batch in one request (read from the game's
-      // submitConfirm/submitGiftActions, 22 Nov 2026). So: select everything wanted at once (oldest of each type first, never
-      // "and Return"), confirm once, then check the game really dropped those gifts from the list.
-      const confirmBtn = (root) => [...root.querySelectorAll(`.${V}-action-confirm`)].find((b) => visible(b) && !/disabled/.test(b.className));
-      const claim = async (root) => {
-        const parsed = parseClaimTab(root);
-        const want = wanted();
-        let left = Number.isFinite(parsed.claimLeft) ? parsed.claimLeft : Infinity;
-        const picked = [];
-        for (const g of parsed.groups) for (const r of g.rows.slice(0, Math.min(want[g.type] ?? 0, g.count))) if (left > 0) { picked.push(r); left--; }
-        if (!picked.length) return { done: 0 };
-        picked.forEach((r) => { if (!r.accept.classList.contains('selected')) r.accept.click(); });
-        const chosen = picked.filter((r) => r.accept.classList.contains('selected'));
-        if (!chosen.length) return { done: 0, error: 'The game wouldn\'t select any gifts (claim limit reached?). Nothing was claimed.' };
-        const btn = await waitFor(() => confirmBtn(root), 4000);
-        if (!btn) return { done: 0, error: 'Gifts were selected but the confirm button never enabled. Nothing was claimed.' };
-        setStatus(`Claiming ${chosen.length} gifts…`);
-        btn.click();
-        const overlay = root.querySelector(`.${V}-confirmOverlay`);
-        if (await waitFor(() => visible(overlay), 2500)) { await sleep(200); overlay.querySelector(`.${V}-confirmPopup-submitConfirmButton`)?.click(); }
-        // Success = the game removed the claimed gifts from the list (it redraws from the server's reply).
-        const gone = await waitFor(() => chosen.every((r) => !r.el.isConnected), 20000);
-        if (!gone) return { done: 0, error: 'The game didn\'t confirm the claim, so nothing is counted as claimed. Check the dialog.' };
-        return { done: chosen.length, short: picked.length - chosen.length };
-      };
+      // ---- Doing it: straight to the game's own gift endpoint, no clicking, no dialog changes ----
+      // The game's gift dialog keeps a queue of actions (claim ids, send actions) and posts them as ONE request
+      // (submitGiftActions -> action claim_and_send). Selecting through its pure-state helpers and submitting is exactly what the
+      // buttons do, minus the screen. Read from the game's code 22 Nov 2026; the batch submit itself is not live-tested here.
+      const gv = () => hg.views.GiftSelectorView;
+      const gameReady = () => { try { gv().getClaimableGiftsSortedByTime(); return true; } catch { return false; } };
+      // The game loads its gift data when the inbox is opened; open and close it in the same tick so nothing is painted.
+      const ensureData = async () => { if (gameReady()) return true; try { gv().showInbox(); gv().hideInbox(); } catch (e) { warn(e); } return Boolean(await waitFor(gameReady, 10000)); };
+      const once = (start, ms) => new Promise((res) => { let d = false; const f = (x) => { if (!d) { d = true; clearTimeout(t); res(x); } }; const t = setTimeout(() => f(null), ms); try { start(f); } catch (e) { warn(e); f(null); } });
+      const loadFriends = async () => { const r = await once((f) => hg.utils.User.getFriendsAndTeamMembers(['snuid', 'name'], f, () => f(null)), 15000); return (Array.isArray(r) ? r : Object.values(r || {})).filter((x) => x?.snuid).map((x) => ({ key: `id:${x.snuid}`, snuid: String(x.snuid), name: x.name })); };
+      const owned = async (types) => { const r = await once((f) => hg.utils.UserInventory.getItems(types, f, () => f(null)), 10000); return r ? Object.fromEntries((Array.isArray(r) ? r : Object.values(r)).map((x) => [x.type, Number(x.quantity) || 0])) : null; };
+      const submit = () => once((f) => gv().submitGiftActions(f), 30000);
 
-      // ---- Sending: Send tab > Gift of the Day tile > friend tiles > Select Gifts (> Confirm) ----
-      const tiles = (root) => [...root.querySelectorAll(`a.${V}-friend`)].map((el) => ({ el, name: norm(el.querySelector(`.${V}-friend-name`)?.textContent), key: el.dataset.snuid ? `id:${el.dataset.snuid}` : '' })).filter((t) => t.key);
-      const send = async (root) => {
-        const tab = [...root.querySelectorAll(`.${V}-tabHeader`)][1];
-        if (!tab) return { sent: 0, error: 'No Send Free Gifts tab found.' };
-        tab.click();
-        const gotd = await waitFor(() => root.querySelector(`.${V}-gift.gift_of_the_day`));
-        if (!gotd) return { sent: 0, error: 'No Gift of the Day found on the Send tab, so nothing was sent.' };
-        gotd.click();
-        const all = await waitFor(() => { const t = tiles(root); return t.length && visible(t[0].el) ? t : null; }, 10000);
-        if (!all) return { sent: 0, error: 'The friend list didn\'t appear after choosing the gift.' };
-        // MH Improved adds a "last active" sort. If it's there, the order tells us who is active; if not, activity is just not used.
-        const sortLink = [...root.querySelectorAll('a, span')].find((e) => /^last active$/i.test(norm(e.textContent)) && !e.closest('#mhgd-panel'));
-        let ranked = all;
-        if (sortLink) { sortLink.click(); await sleep(500); ranked = tiles(root); }
-        const recency = new Map(ranked.map((t, i) => [t.key, sortLink ? 1 - i / Math.max(1, ranked.length - 1) : null]));
-        const sendLeft = num(q(root, 'numSendActionsRemaining'));
-        const h = loadH();
-        const today = sentToday(h, windowStart(Date.now(), h.resetAt));
-        const picks = pickRecipients(ranked.map((t) => ({ ...t, recency: recency.get(t.key) })), h, { slots: Number.isFinite(sendLeft) ? sendLeft : 25, today, smart: ctx.settings.get('smartPick'), explore: ctx.settings.get('explorePct') / 100 });
-        const info = { pool: all.length, skipped: today.size };
-        if (!picks.length) return { sent: 0, ...info };
-        for (const p of picks) { if (!p.el.classList.contains('selected')) p.el.click(); await sleep(40); }
-        const confirm = () => [...root.querySelectorAll(`.${V}-action-confirm`)].find((b) => visible(b) && !/disabled/.test(b.className));
-        const btn = await waitFor(confirm, 3000);
-        if (!btn) return { sent: 0, ...info, error: 'Friends were selected but the confirm button never enabled. Nothing was sent.' };
-        const before = sendLeft;
-        btn.click();
-        const overlay = root.querySelector(`.${V}-confirmOverlay`);
-        if (await waitFor(() => visible(overlay), 3000)) { await sleep(300); overlay.querySelector(`.${V}-confirmPopup-submitConfirmButton`)?.click(); }
-        const done = await waitFor(() => num(q(root, 'numSendActionsRemaining')) < before, 15000);
-        if (!done) return { sent: 0, ...info, error: 'The game didn\'t confirm the send, so nothing was recorded as sent. Check the dialog.' };
-        const now = Date.now();
-        picks.forEach((p) => h.sent.push({ k: p.key, n: p.name, t: now }));
-        saveH(h);
-        return { sent: picks.length, ...info };
-      };
+      /** Claim list straight from the game's data, grouped like the panel so the same plan/inputs apply. */
+      const claimables = () => gv().getClaimableGiftsSortedByTime().map((x) => ({ ...x, t: (x.create_date || 0) * 1000 })).sort((a, b) => a.t - b.t);
+      const dataGroups = (list) => { const m = new Map(); for (const x of list) { const g = m.get(nameKey(x.item_name)) || { type: x.item_name, count: 0, urgent: 0, rows: [] }; g.count++; g.rows.push(x); if (Date.now() - x.t >= (x.is_daily ? 0.5 : 6) * DAY_MS) g.urgent++; m.set(nameKey(x.item_name), g); } return [...m.values()]; };
 
       const run = async (mode) => {
         if (busy) return;
-        let root = dialog();
-        if (!root) { setStatus('Open the Free Gifts dialog first.'); return; }
-        busy = true;
-        draw(root);
+        busy = true; setStatus('Working…');
         document.querySelectorAll('#mhgd-panel button').forEach((b) => { b.disabled = true; });
         const parts = [];
         try {
-          if (mode !== 'send') { const r = await claim(root); parts.push(`Claimed ${r.done}.`); root = dialog() || root; if (r.error) { parts.push(r.error); mode = 'claim'; } }
-          if (mode !== 'claim' && (mode === 'send' || ctx.settings.get('sendAfterClaim'))) {
-            const r = await send(root);
-            parts.push(r.error ? r.error : `Sent to ${r.sent} of ${r.pool} friends (${r.skipped} skipped as they sent you a gift today).`);
+          if (!(await ensureData())) throw new Error('The game\'s gift data didn\'t load.');
+          const g = gv();
+          const info = {};
+          g.clearActions();
+
+          // 1. Send plan first (probing needs an empty queue): how many sends the game still allows, and who is eligible.
+          let picks = [];
+          if (mode !== 'claim') {
+            const gotd = g.getSendableGifts(true).sendable_gifts.find((x) => x.is_daily);
+            if (!gotd) parts.push('No Gift of the Day to send.');
+            else {
+              const friends = await loadFriends();
+              const idx = gotd.gift_index;
+              let cap = 0;
+              for (const f of friends) { try { g.canSendGift(f.snuid, idx, 1, true); g.addSendAction(f.snuid, idx, 1); cap++; } catch (e) { if (/limit/i.test(e)) break; } }
+              g.clearActions();
+              const eligible = cap ? friends.filter((f) => { try { return g.canSendGift(f.snuid, idx, 1, true); } catch { return false; } }) : [];
+              const h = loadH();
+              const today = sentToday(h, windowStart(Date.now(), h.resetAt));
+              picks = pickRecipients(eligible, h, { slots: cap, today, smart: ctx.settings.get('smartPick'), explore: ctx.settings.get('explorePct') / 100 });
+              info.pool = eligible.length; info.skipped = eligible.filter((f) => today.has(f.key)).length; info.cap = cap;
+              if (!picks.length) parts.push(cap ? 'Nobody eligible to send to.' : 'No sends left today.');
+            }
           }
-        } catch (e) { warn(e); parts.push(`Stopped: ${e.message}`); }
+
+          // 2. Claim plan: the panel's numbers if the dialog is open, otherwise the same default plan.
+          const list = mode === 'send' ? [] : claimables();
+          const groups = dataGroups(list);
+          const manual = panelWanted();
+          const limitLeft = (() => { let n = 0; try { for (const x of list) { g.canClaimGift(x.gift_id); g.addClaimAction(x.gift_id); n++; } } catch { /* limit */ } g.clearActions(); return n; })();
+          const plan = Object.keys(manual).length ? Object.fromEntries(groups.map((x) => [x.type, manual[x.type] ?? 0])) : planClaim(groups, limitLeft, ctx.settings.get('fillOrder'), values());
+          const claims = [];
+          for (const grp of groups) for (const x of grp.rows.slice(0, plan[grp.type] ?? 0)) { try { g.canClaimGift(x.gift_id); g.addClaimAction(x.gift_id); claims.push(x); } catch { break; } }
+          if (mode !== 'send' && !claims.length) parts.push(groups.length ? 'No claims left today (or none chosen).' : 'No gifts waiting.');
+
+          // 3. Queue the sends, then one request for everything.
+          const idx = mode !== 'claim' ? g.getSendableGifts(true).sendable_gifts.find((x) => x.is_daily)?.gift_index : null;
+          const queued = [];
+          for (const p of picks) { try { g.canSendGift(p.snuid, idx, 1, true); g.addSendAction(p.snuid, idx, 1); queued.push(p); } catch { /* skip */ } }
+          if (claims.length || queued.length) {
+            setStatus(`Sending ${claims.length} claims and ${queued.length} gifts…`);
+            const types = [...new Set(claims.map((x) => x.item_type))];
+            const before = types.length ? await owned(types) : null;
+            const res = await submit();
+            if (!res?.success) { parts.push('The game didn\'t confirm the request, so nothing is counted as done. Check the gifts dialog.'); g.clearActions(); }
+            else {
+              if (claims.length) {
+                const after = types.length ? await owned(types) : null;
+                const expected = claims.reduce((n, x) => n + (x.item_quantity || 1), 0);
+                const gained = before && after ? types.reduce((n, t) => n + (after[t] - before[t]), 0) : null;
+                parts.push(`Claimed ${claims.length} gifts${gained == null ? '' : ` (inventory +${gained}, expected +${expected}${gained < expected ? ': check it' : ''})`}.`);
+              }
+              if (queued.length) {
+                const h = loadH(); const now = Date.now();
+                queued.forEach((p) => h.sent.push({ k: p.key, n: p.name, t: now })); saveH(h);
+                parts.push(`Sent to ${queued.length} of ${info.pool} friends (${info.skipped} skipped as they sent you a gift today).`);
+              }
+            }
+          }
+        } catch (e) { warn(e); parts.push(`Stopped: ${e.message}`); try { gv().clearActions(); } catch { /* */ } }
         busy = false;
-        status = parts.join(' ');
-        // Back to the Claim tab so the result is next to the panel.
-        [...(dialog()?.querySelectorAll(`.${V}-tabHeader`) || [])][0]?.click();
-        await sleep(300);
+        status = parts.join(' ') || 'Nothing to do.';
+        // The game redraws from its refreshed data, so the dialog (if open) shows the new limits and list.
+        if (dialog()) { try { gv().show(); } catch (e) { warn(e); } await sleep(400); }
         redraw();
+        ctx.setStatus(status);
       };
 
       ctx.addStyle(CSS);
@@ -968,7 +970,7 @@ const Panel = (() => {
         e.preventDefault();
         const parsed = parseClaimTab(dialog());
         const best = planClaim(parsed.groups, parsed.claimLeft, ctx.settings.get('fillOrder'), values());
-        const left = (skip) => (Number.isFinite(parsed.claimLeft) ? parsed.claimLeft : Infinity) - Object.entries(wanted()).reduce((n, [t, v]) => n + (t === skip ? 0 : v), 0);
+        const left = (skip) => (Number.isFinite(parsed.claimLeft) ? parsed.claimLeft : Infinity) - Object.entries(panelWanted()).reduce((n, [t, v]) => n + (t === skip ? 0 : v), 0);
         document.querySelectorAll('#mhgd-panel input[data-type]').forEach((i) => {
           const g = parsed.groups.find((x) => x.type === i.dataset.type);
           if (s.dataset.set === 'best') i.value = best[i.dataset.type] ?? 0;
@@ -979,6 +981,7 @@ const Panel = (() => {
       scan();
 
       return { actions: [
+        { label: 'Claim & send gifts now', run: () => run('both') },
         { label: 'Open gifts dialog', run: () => { try { hg.views.GiftSelectorView.showInbox(); } catch (e) { warn(e); } } },
         { label: 'Clear gifting history', run: () => { lsSet(HKEY, emptyHistory()); ctx.setStatus('History cleared'); } },
       ] };

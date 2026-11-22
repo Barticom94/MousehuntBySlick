@@ -203,23 +203,26 @@ await page.evaluate(() => {
   localStorage.setItem('mhs-settings-v1', JSON.stringify({ 'daily-gifting': { values: { explorePct: 0 } } }));
   window.__log = [];
   const $ = (s) => document.querySelector(s);
-  // Like the real game: Accept only SELECTS (limit enforced); nothing is claimed until Select Gifts > Confirm.
-  const sel = () => document.querySelectorAll('.giftSelectorView-friendRow-action.claim.selected');
-  document.querySelectorAll('.giftSelectorView-friendRow-action.claim').forEach((a) => a.addEventListener('click', () => {
-    if (a.classList.contains('selected')) a.classList.remove('selected');
-    else if (sel().length < Number($('.giftSelectorView-numClaimActionsRemaining').textContent)) a.classList.add('selected');
-    $('#cgo').classList.toggle('disabled', !sel().length);
-    window.__log.push('select ' + a.closest('.giftSelectorView-friendRow').querySelector('span').textContent);
-  }));
-  $('#cgo').addEventListener('click', () => { if (!$('#cgo').classList.contains('disabled')) $('#ov').style.display = ''; });
-  document.querySelectorAll('.giftSelectorView-friendRow-action.return').forEach((a) => a.addEventListener('click', () => window.__log.push('RETURN CLICKED')));
-  for (const [id, n] of [[1, 'Amy'], [20, 'Zed'], [21, 'Yan'], [22, 'Xi'], [23, 'Wu']]) { const d = document.createElement('a'); d.className = 'giftSelectorView-friend'; d.dataset.snuid = id; d.innerHTML = '<div class="giftSelectorView-friend-name"><span>' + n + '</span></div>'; d.addEventListener('click', () => d.classList.toggle('selected')); $('#friends').append(d); }
-  $('#sendtab').addEventListener('click', () => { document.querySelectorAll('.selectClaimableGift').forEach((e) => { e.style.display = 'none'; }); $('.selectGift').style.display = ''; });
-  $('#gotd').addEventListener('click', () => { $('.selectGift').style.display = 'none'; $('#friendsview').style.display = ''; $('#go').style.display = ''; });
-  const upd = () => { const g = $('#go'); g.classList.toggle('disabled', !document.querySelector('.giftSelectorView-friend.selected')); };
-  new MutationObserver(upd).observe($('#friends'), { subtree: true, attributes: true });
-  $('#go').addEventListener('click', () => { if (!$('#go').classList.contains('disabled')) $('#ov').style.display = ''; });
-  $('#ok').addEventListener('click', () => { if (sel().length) { const names = [...sel()].map((a) => a.closest('.giftSelectorView-friendRow').querySelector('span').textContent); window.__log.push('claim ' + names.join(',')); sel().forEach((a) => a.closest('.giftSelectorView-friendRow').remove()); $('.giftSelectorView-numClaimActionsRemaining').textContent -= names.length; $('#cgo').classList.add('disabled'); $('#ov').style.display = 'none'; return; } const s = [...document.querySelectorAll('.giftSelectorView-friend.selected span')].map((x) => x.textContent).sort(); window.__log.push('send ' + s.join(',')); $('.giftSelectorView-numSendActionsRemaining').textContent -= s.length; $('#ov').style.display = 'none'; });
+  // Stand-in for the game's gift view: pure-state helpers + one batch submit, like the real one. Accept buttons must NOT be clicked.
+  document.querySelectorAll('.giftSelectorView-friendRow-action').forEach((a) => a.addEventListener('click', () => window.__log.push('UI CLICKED')));
+  const ago = (h) => Math.floor((Date.now() - h * 36e5) / 1000);
+  const st = { loaded: false, claim: [], send: [], sentSet: new Set(['99']), claimLimit: 3, sendLimit: 4, inv: 10,
+    gifts: [[1, 'Quantum Quartz', 1], [2, 'Quantum Quartz', 30], [3, 'Quantum Quartz', 5], [4, 'Pollutinum', 4], [5, 'Pollutinum', 50]].map(([id, n, h]) => ({ gift_id: id, item_name: n, item_type: n.toLowerCase().replace(' ', '_'), item_quantity: 1, create_date: ago(h), channel: 'gift', is_daily: true })) };
+  window.__st = st;
+  window.hg.views.GiftSelectorView = {
+    showInbox() { setTimeout(() => { st.loaded = true; }, 50); window.__log.push('showInbox'); }, hideInbox() {},
+    getClaimableGiftsSortedByTime() { if (!st.loaded) throw new TypeError('null'); return st.gifts.map((x) => ({ ...x })); },
+    clearActions() { st.claim = []; st.send = []; },
+    canClaimGift(id) { if (st.claim.length + 1 > st.claimLimit) throw 'Claim limit reached.'; return true; },
+    addClaimAction(id) { st.claim.push(id); },
+    getSendableGifts() { return { sendable_gifts: [{ is_daily: true, gift_index: 'gi1', name: 'Quantum Quartz' }] }; },
+    canSendGift(snuid) { if (st.sentSet.has(String(snuid))) throw "You've already sent them a free gift."; if (st.send.some((x) => x.snuid === snuid)) throw 'already sending'; if (st.send.length + 1 > st.sendLimit) throw 'Send limit reached.'; return true; },
+    addSendAction(snuid, gi) { st.send.push({ snuid, gift_index: gi }); },
+    submitGiftActions(cb) { window.__log.push('submit claim=' + st.claim.join(',') + ' send=' + st.send.map((x) => x.snuid).sort().join(',')); st.gifts = st.gifts.filter((x) => !st.claim.includes(x.gift_id)); st.inv += st.claim.length; st.claimLimit -= st.claim.length; st.send.forEach((x) => st.sentSet.add(String(x.snuid))); st.sendLimit -= st.send.length; st.claim = []; st.send = []; setTimeout(() => cb({ success: true }), 30); },
+    show() { window.__log.push('show'); },
+  };
+  window.hg.utils.User = { getFriendsAndTeamMembers: (f, ok) => ok([1, 99, 20, 21, 22, 23].map((id, i) => ({ snuid: String(id), name: ['Amy', 'Old', 'Zed', 'Yan', 'Xi', 'Wu'][i] }))) };
+  window.hg.utils.UserInventory.getItems = (types, ok) => ok(types.map((t) => ({ type: t, quantity: st.inv })));
 });
 await page.addScriptTag({ content: script });
 await page.waitForSelector('#mhgd-panel');
@@ -240,15 +243,20 @@ await page.locator('#mhgd-panel [data-set=best]').click();
 assert.deepEqual(await page.locator('#mhgd-panel input[data-type]').evaluateAll((els) => els.map((e) => e.value)), ['3', '0']);
 step('quick buttons: None, Max (capped by the daily limit), Fill to limit, None for all');
 await page.locator('#mhgd-panel [data-act=both]').click();
-await page.waitForFunction(() => window.__log.some((l) => l.startsWith('send')), null, { timeout: 20000 });
+await page.waitForFunction(() => window.__log.some((l) => l.startsWith('submit')), null, { timeout: 20000 });
 const log = await page.evaluate(() => window.__log);
-assert.deepEqual(log.slice(0, 4), ['select Bob', 'select Cat', 'select Amy', 'claim Amy,Bob,Cat']); // oldest first, all selected then ONE confirmed batch
-assert.ok(!log.includes('RETURN CLICKED'));
-assert.equal(log[4], 'send Wu,Xi,Yan,Zed'); // Amy sent today (snuid 1), so not sent to
+assert.ok(!log.includes('UI CLICKED'), 'the script must not click the game UI');
+// Oldest first, within the limit of 3, one request, Amy (sent today) and Old (already sent by the game's own rule) not sent to.
+assert.ok(log.includes('submit claim=2,3,1 send=20,21,22,23'), log.join(' | '));
+assert.equal(log.filter((l) => l.startsWith('submit')).length, 1);
+const st = await page.evaluate(() => ({ g: window.__st.gifts.map((x) => x.gift_id), inv: window.__st.inv }));
+assert.deepEqual(st.g, [4, 5]);
+await page.waitForFunction(() => /Sent to/.test(document.querySelector('#mhgd-panel .st')?.textContent || ''));
+assert.match(await page.locator('#mhgd-panel .st').textContent(), /Claimed 3 gifts \(inventory \+3, expected \+3\)\. Sent to 4 of 5 friends/);
 const hist = await page.evaluate(() => JSON.parse(localStorage.getItem('mh-gifting-v1-4242')));
 assert.equal(hist.sent.length, 4);
 assert.ok(hist.resetAt > Date.now());
-step('gifting accepts oldest first without returning, sends to everyone except today\'s senders and logs it');
+step('gifting claims and sends in ONE request without touching the game UI, verifies inventory, logs the sends');
 
 // 11. Pure parts: return learning, rest period and recency
 const pure = await page.evaluate(() => {
