@@ -65,8 +65,8 @@ await load();
 
 // 1. Panel and modules
 await panel('.launcher').click();
-assert.equal(await panel('.card').count(), 5);
-assert.deepEqual(await panel('.switch').evaluateAll((els) => els.map((e) => e.getAttribute('aria-checked'))), ['true', 'true', 'true', 'true', 'true']);
+assert.equal(await panel('.card').count(), 6);
+assert.deepEqual(await panel('.switch').evaluateAll((els) => els.map((e) => e.getAttribute('aria-checked'))), ['true', 'true', 'true', 'true', 'true', 'true']);
 step('panel lists five modules, all on');
 
 // 2. Migrated horn settings
@@ -267,6 +267,30 @@ assert.deepEqual(pure.picked, ['a']);
 assert.deepEqual(pure.none, ['c', 'd']);
 assert.deepEqual(pure.rec, ['new']);
 step('friend picking prefers returners and recently active friends and skips today\'s senders');
+
+// 12. Map invites: fill the open slots in one request, friends on no map first, nobody twice
+const pick = await page.evaluate(() => {
+  const m = { max_hunters: 10, num_active_hunters: 7, invited_hunters: ['i1'], hunters: [{ sn_user_id: 'h1' }] };
+  const fr = [{ sn_user_id: 'h1' }, { sn_user_id: 'i1' }, { sn_user_id: 'b1', map_name: 'x' }, { sn_user_id: 'f1', map_name: 'x' }, { sn_user_id: 'a1' }, { sn_user_id: 'a2' }];
+  return { three: window.mhMapInvites.pickInvitees(fr, m, ['f1']), full: window.mhMapInvites.pickInvitees(fr, { ...m, num_active_hunters: 10 }) };
+});
+assert.deepEqual(pick.three, { slots: 3, ids: ['a1', 'a2', 'f1'] });
+assert.deepEqual(pick.full, { slots: 0, ids: [] });
+await page.evaluate(() => {
+  window.__sent = [];
+  user.quests = { QuestRelicHunter: { default_map_id: 77 } };
+  hg.utils.TreasureMapUtil = {
+    getMapInfo: (id, ok) => ok({ success: true, treasure_map: { name: 'Test Map', is_owner: true, max_hunters: 10, num_active_hunters: 9, invited_hunters: [], hunters: [] } }),
+    getFavouriteFriends: () => [], sendInvites: (id, ids, ok) => { window.__sent.push([id, ids]); ok({ success: true }); },
+  };
+  hg.utils.User = { getFriends: (f, ok) => ok([{ sn_user_id: 'x1' }, { sn_user_id: 'x2', map_name: 'm' }]) };
+});
+await panel('.launcher').click();
+await panel('[data-mod=map-invites] .actions .btn').click();
+await page.waitForFunction(() => window.__sent.length === 1);
+assert.deepEqual(await page.evaluate(() => window.__sent), [[77, ['x1']]]);
+assert.match(await panel('[data-status=map-invites]').textContent(), /Invited 1 of 1 open slot on Test Map/);
+step('map invites sends one request filling the open slots');
 
 assert.deepEqual(errors, []);
 await browser.close();

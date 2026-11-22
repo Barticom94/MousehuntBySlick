@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MouseHunt Super Script
 // @namespace    adamh-mousehunt
-// @version      1.1.1
-// @description  One script for MouseHunt with a control panel: Auto Horn & King's Reward solver, Loot Log, Gift Links. Built from modules in src/.
+// @version      1.2.0
+// @description  One script for MouseHunt with a control panel: Auto Horn & King's Reward solver, Loot Log, Gift Links, Map Invites. Built from modules in src/.
 // @author       Adam Harley (Auto Horn & KR Solver: Slick, fork of daniellok)
 // @license      MIT
 // @match        https://www.mousehuntgame.com/*
@@ -24,7 +24,7 @@
 // ---- core/10-util.js ----
 // Small helpers shared by the core and every module. Core files share one scope; module files are block-scoped.
 
-const MH_VERSION = '1.1.1'; // replaced by build.mjs from package.json
+const MH_VERSION = '1.2.0'; // replaced by build.mjs from package.json
 
 const DAY = 864e5;
 const MIN = 6e4;
@@ -631,7 +631,7 @@ const Panel = (() => {
 // Module: Daily Gifting
 // One-click daily gifting from the game's own gifts dialog (Gifts menu > View More Gifts):
 //   1. shows what is waiting grouped by gift type (no senders) with a count to claim per type;
-//   2. ACCEPTS those gifts (never "and Return") up to the daily claim limit, by selecting them with the game's own Accept buttons and confirming once (one batch request);
+//   2. ACCEPTS those gifts (never "and Return") up to the daily claim limit, via the game's own Accept buttons;
 //   3. sends the gift of the day to friends who have NOT already sent you a gift today (they can't return one), favouring
 //      friends who have returned gifts, send regularly, and were active recently.
 //
@@ -790,6 +790,7 @@ const Panel = (() => {
       { key: 'sendAfterClaim', type: 'checkbox', label: 'Send gifts straight after claiming', default: true },
       { key: 'smartPick', type: 'checkbox', label: 'Choose friends by past returns and activity, not just at random', default: true },
       { key: 'explorePct', type: 'number', label: 'Share of sends that stay random', unit: '%', min: 0, max: 100, default: 20 },
+      { key: 'clickGapMs', type: 'number', label: 'Pause between game clicks', unit: 'ms', min: 100, max: 5000, default: 700 },
     ],
     init(ctx) {
       const uid = String(user.user_id);
@@ -846,12 +847,11 @@ const Panel = (() => {
         panel.id = 'mhgd-panel';
         panel.dataset.sig = sig;
         const total = parsed.groups.reduce((n, g) => n + g.count, 0);
+        const rows = parsed.groups.map((g) => `<tr><td>${esc(g.type)}</td><td class="n">${g.count} waiting</td><td class="n"><label>Claim <input type="number" min="0" max="${g.count}" data-type="${esc(g.type)}" value="${esc(keep[g.type] ?? plan[g.type] ?? 0)}"></label></td></tr>`).join('');
         const dis = busy ? ' disabled' : '';
-        const rows = parsed.groups.map((g) => `<tr><td>${esc(g.type)}</td><td class="n">${g.count} waiting</td><td class="n"><label>Claim <input type="number" min="0" max="${g.count}" data-type="${esc(g.type)}" value="${esc(keep[g.type] ?? plan[g.type] ?? 0)}"></label> <button type="button" class="sec" data-set="max" data-type="${esc(g.type)}"${dis}>Max</button><button type="button" class="sec" data-set="none" data-type="${esc(g.type)}"${dis}>None</button></td></tr>`).join('');
         panel.innerHTML = `<b>Daily gifting</b> <span class="dim">${total} waiting${Number.isFinite(parsed.claimLeft) ? `, ${parsed.claimLeft} claims left today` : ''}</span>
           <table>${rows || '<tr><td>No gifts waiting.</td></tr>'}</table>
           <button type="button" data-act="both"${dis}>Claim &amp; send gifts</button><button type="button" class="sec" data-act="claim"${dis}>Claim only</button><button type="button" class="sec" data-act="send"${dis}>Send only</button>
-          <div class="dim">Set all: <button type="button" class="sec" data-set="best"${dis}>Fill to limit</button><button type="button" class="sec" data-set="allnone"${dis}>None</button></div>
           <div class="st" role="status">${esc(status)}</div>`;
         host.after(panel);
       };
@@ -859,31 +859,26 @@ const Panel = (() => {
 
       const wanted = () => Object.fromEntries([...document.querySelectorAll('#mhgd-panel input[data-type]')].map((i) => [i.dataset.type, Math.max(0, parseInt(i.value, 10) || 0)]));
 
-      // Claiming is two steps in the game: each Accept only SELECTS the gift (it is queued in the dialog), and nothing is claimed
-      // until the confirm button ("Select Gifts" > Confirm) sends the whole batch in one request (read from the game's
-      // submitConfirm/submitGiftActions, 22 Nov 2026). So: select everything wanted at once (oldest of each type first, never
-      // "and Return"), confirm once, then check the game really dropped those gifts from the list.
-      const confirmBtn = (root) => [...root.querySelectorAll(`.${V}-action-confirm`)].find((b) => visible(b) && !/disabled/.test(b.className));
+      // Accepts through the game's own Accept button (never "and Return"), oldest of each type first.
       const claim = async (root) => {
         const parsed = parseClaimTab(root);
         const want = wanted();
+        const gap = ctx.settings.get('clickGapMs');
         let left = Number.isFinite(parsed.claimLeft) ? parsed.claimLeft : Infinity;
-        const picked = [];
-        for (const g of parsed.groups) for (const r of g.rows.slice(0, Math.min(want[g.type] ?? 0, g.count))) if (left > 0) { picked.push(r); left--; }
-        if (!picked.length) return { done: 0 };
-        picked.forEach((r) => { if (!r.accept.classList.contains('selected')) r.accept.click(); });
-        const chosen = picked.filter((r) => r.accept.classList.contains('selected'));
-        if (!chosen.length) return { done: 0, error: 'The game wouldn\'t select any gifts (claim limit reached?). Nothing was claimed.' };
-        const btn = await waitFor(() => confirmBtn(root), 4000);
-        if (!btn) return { done: 0, error: 'Gifts were selected but the confirm button never enabled. Nothing was claimed.' };
-        setStatus(`Claiming ${chosen.length} gifts…`);
-        btn.click();
-        const overlay = root.querySelector(`.${V}-confirmOverlay`);
-        if (await waitFor(() => visible(overlay), 2500)) { await sleep(200); overlay.querySelector(`.${V}-confirmPopup-submitConfirmButton`)?.click(); }
-        // Success = the game removed the claimed gifts from the list (it redraws from the server's reply).
-        const gone = await waitFor(() => chosen.every((r) => !r.el.isConnected), 20000);
-        if (!gone) return { done: 0, error: 'The game didn\'t confirm the claim, so nothing is counted as claimed. Check the dialog.' };
-        return { done: chosen.length, short: picked.length - chosen.length };
+        let done = 0;
+        for (const g of parsed.groups) {
+          for (const r of g.rows.slice(0, Math.min(want[g.type] ?? 0, g.count))) {
+            if (left <= 0 || !ctx.alive()) break;
+            const before = num(q(root, 'numClaimActionsRemaining'));
+            r.accept.click();
+            const ok = await waitFor(() => !root.contains(r.el) || num(q(root, 'numClaimActionsRemaining')) < before);
+            if (!ok) return { done, error: `The game didn't confirm claiming ${g.type}. Stopped after ${done}.` };
+            done++; left--;
+            setStatus(`Claimed ${done}…`);
+            await sleep(gap);
+          }
+        }
+        return { done };
       };
 
       // ---- Sending: Send tab > Gift of the Day tile > friend tiles > Select Gifts (> Confirm) ----
@@ -926,14 +921,14 @@ const Panel = (() => {
 
       const run = async (mode) => {
         if (busy) return;
-        let root = dialog();
+        const root = dialog();
         if (!root) { setStatus('Open the Free Gifts dialog first.'); return; }
         busy = true;
         draw(root);
         document.querySelectorAll('#mhgd-panel button').forEach((b) => { b.disabled = true; });
         const parts = [];
         try {
-          if (mode !== 'send') { const r = await claim(root); parts.push(`Claimed ${r.done}.`); root = dialog() || root; if (r.error) { parts.push(r.error); mode = 'claim'; } }
+          if (mode !== 'send') { const r = await claim(root); parts.push(`Claimed ${r.done}.`); if (r.error) { parts.push(r.error); mode = 'claim'; } }
           if (mode !== 'claim' && (mode === 'send' || ctx.settings.get('sendAfterClaim'))) {
             const r = await send(root);
             parts.push(r.error ? r.error : `Sent to ${r.sent} of ${r.pool} friends (${r.skipped} skipped as they sent you a gift today).`);
@@ -957,19 +952,7 @@ const Panel = (() => {
       ctx.onStop(() => { mo.disconnect(); clearTimeout(timer); document.getElementById('mhgd-panel')?.remove(); document.querySelectorAll(`.${V}-claimableGift-friendContainer`).forEach((el) => { el.style.display = ''; }); });
       ctx.listen(document, 'click', (e) => {
         const b = e.target.closest?.('#mhgd-panel [data-act]');
-        if (b) { e.preventDefault(); run(b.dataset.act); return; }
-        const s = e.target.closest?.('#mhgd-panel [data-set]');
-        if (!s || busy) return;
-        e.preventDefault();
-        const parsed = parseClaimTab(dialog());
-        const best = planClaim(parsed.groups, parsed.claimLeft, ctx.settings.get('fillOrder'), values());
-        const left = (skip) => (Number.isFinite(parsed.claimLeft) ? parsed.claimLeft : Infinity) - Object.entries(wanted()).reduce((n, [t, v]) => n + (t === skip ? 0 : v), 0);
-        document.querySelectorAll('#mhgd-panel input[data-type]').forEach((i) => {
-          const g = parsed.groups.find((x) => x.type === i.dataset.type);
-          if (s.dataset.set === 'best') i.value = best[i.dataset.type] ?? 0;
-          else if (s.dataset.set === 'allnone') i.value = 0;
-          else if (i.dataset.type === s.dataset.type) i.value = s.dataset.set === 'none' ? 0 : Math.max(0, Math.min(g?.count ?? 0, left(i.dataset.type)));
-        });
+        if (b) { e.preventDefault(); run(b.dataset.act); }
       });
       scan();
 
@@ -1948,6 +1931,80 @@ const Panel = (() => {
   ctx.every(showCount, MIN);
 
   return { actions: [{ label: 'Open Loot Log', run: openLootLog }] };
+    },
+  });
+}
+
+}
+
+// ---- modules/map-invites.js ----
+{
+// Module: Map Invites
+// One click invites as many friends as the treasure map has open slots, using the game's own endpoints
+// (hg.utils.User.getFriends for the friend list, hg.utils.TreasureMapUtil.getMapInfo / sendInvites for the map),
+// in a single request instead of ticking names in the invite dialog.
+// Mirrors the game's own invite dialog: open slots = max_hunters - num_active_hunters.
+{
+  const MAP_FIELDS = ['map_name', 'wanted_poster_name', 'event_map_name'];
+
+  /**
+   * Friends to invite, best first: friends on no map, then favourites among the rest, then friends already on another
+   * map (the game's dialog lets you invite those too). Skips hunters on this map and ones already invited.
+   * Pure, so it can be tested without the game.
+   */
+  const pickInvitees = (friends, map, favourites = []) => {
+    const skip = new Set([...(map.invited_hunters || []), ...(map.hunters || []).map((h) => h.sn_user_id)].map(String));
+    const fav = new Set((favourites || []).map(String));
+    const slots = Math.max(0, (Number(map.max_hunters) || 0) - (Number(map.num_active_hunters) || 0));
+    const busy = (f) => MAP_FIELDS.some((k) => f[k]);
+    const rank = (f) => (busy(f) ? (fav.has(String(f.sn_user_id)) ? 1 : 2) : 0);
+    const picked = friends.filter((f) => f && f.sn_user_id && !skip.has(String(f.sn_user_id)))
+      .map((f, i) => ({ f, i, r: rank(f) })).sort((a, b) => a.r - b.r || a.i - b.i)
+      .slice(0, slots).map(({ f }) => String(f.sn_user_id));
+    return { slots, ids: picked };
+  };
+  window.mhMapInvites = Object.assign(window.mhMapInvites || {}, { pickInvitees });
+
+  const call = (fn, ...args) => new Promise((ok, err) => fn(...args, ok, err));
+
+  MH.register({
+    id: 'map-invites',
+    name: 'Map Invites',
+    description: 'One click invites the most friends your current treasure map has room for.',
+    requires: gameRequires,
+    init(ctx) {
+      let busy = false;
+      ctx.setStatus('Ready');
+
+      const run = async () => {
+        if (busy) return;
+        busy = true;
+        try {
+          if (typeof hg === 'undefined' || !hg.utils?.TreasureMapUtil || !hg.utils?.User) throw new Error('map tools not found on this page');
+          const q = user.quests?.QuestRelicHunter;
+          const mapId = q?.default_map_id;
+          if (!mapId) { ctx.setStatus('You have no treasure map selected', 'warn'); return; }
+          ctx.setStatus('Checking the map...');
+          const info = await call(hg.utils.TreasureMapUtil.getMapInfo, mapId);
+          const map = info.treasure_map;
+          if (!map) throw new Error('the game returned no map');
+          if (!map.is_owner && map.can_send_invites === false) { ctx.setStatus('You can\'t send invites for this map', 'warn'); return; }
+          const open = (Number(map.max_hunters) || 0) - (Number(map.num_active_hunters) || 0);
+          if (open <= 0) { ctx.setStatus(`${map.name} is full (${map.num_active_hunters}/${map.max_hunters} hunters)`, 'warn'); return; }
+          const friends = await call(hg.utils.User.getFriends, MAP_FIELDS);
+          const { slots, ids } = pickInvitees(friends, map, hg.utils.TreasureMapUtil.getFavouriteFriends());
+          if (!ids.length) { ctx.setStatus(`No friends left to invite (${slots} open, all friends already on the map or invited)`, 'warn'); return; }
+          ctx.setStatus(`Inviting ${ids.length}...`);
+          const res = await call(hg.utils.TreasureMapUtil.sendInvites, mapId, ids);
+          if (res && res.success === false) throw new Error('the game refused the invites');
+          ctx.setStatus(`Invited ${ids.length} of ${slots} open slot${slots === 1 ? '' : 's'} on ${map.name}`);
+        } catch (e) {
+          ctx.log.warn(e);
+          ctx.setStatus(`Invites failed: ${e?.message || e}`, 'warn');
+        } finally { busy = false; }
+      };
+
+      return { actions: [{ label: 'Invite max friends to my map', run }] };
     },
   });
 }

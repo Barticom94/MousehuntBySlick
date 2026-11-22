@@ -2,7 +2,7 @@
 // @name         MouseHunt Super Script
 // @namespace    adamh-mousehunt
 // @version      __VERSION__
-// @description  One script for MouseHunt with a control panel: Auto Horn & King's Reward solver, Loot Log, Gift Links. Built from modules in src/.
+// @description  One script for MouseHunt with a control panel: Auto Horn & King's Reward solver, Loot Log, Gift Links, Map Invites. Built from modules in src/.
 // @author       Adam Harley (Auto Horn & KR Solver: Slick, fork of daniellok)
 // @license      MIT
 // @match        https://www.mousehuntgame.com/*
