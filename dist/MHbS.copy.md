@@ -636,7 +636,7 @@ const Panel = (() => {
 // Module: Daily Gifting
 // One-click daily gifting from the game's own gifts dialog (Gifts menu > View More Gifts):
 //   1. shows what is waiting grouped by gift type (no senders) with a count to claim per type;
-//   2. ACCEPTS those gifts (never "and Return") up to the daily claim limit, via the game's own Accept buttons;
+//   2. ACCEPTS those gifts (never "and Return") up to the daily claim limit, by selecting them with the game's own Accept buttons and confirming once (one batch request);
 //   3. sends the gift of the day to friends who have NOT already sent you a gift today (they can't return one), favouring
 //      friends who have returned gifts, send regularly, and were active recently.
 //
@@ -795,7 +795,6 @@ const Panel = (() => {
       { key: 'sendAfterClaim', type: 'checkbox', label: 'Send gifts straight after claiming', default: true },
       { key: 'smartPick', type: 'checkbox', label: 'Choose friends by past returns and activity, not just at random', default: true },
       { key: 'explorePct', type: 'number', label: 'Share of sends that stay random', unit: '%', min: 0, max: 100, default: 20 },
-      { key: 'clickGapMs', type: 'number', label: 'Pause between game clicks', unit: 'ms', min: 100, max: 5000, default: 700 },
     ],
     init(ctx) {
       const uid = String(user.user_id);
@@ -852,11 +851,12 @@ const Panel = (() => {
         panel.id = 'mhgd-panel';
         panel.dataset.sig = sig;
         const total = parsed.groups.reduce((n, g) => n + g.count, 0);
-        const rows = parsed.groups.map((g) => `<tr><td>${esc(g.type)}</td><td class="n">${g.count} waiting</td><td class="n"><label>Claim <input type="number" min="0" max="${g.count}" data-type="${esc(g.type)}" value="${esc(keep[g.type] ?? plan[g.type] ?? 0)}"></label></td></tr>`).join('');
         const dis = busy ? ' disabled' : '';
+        const rows = parsed.groups.map((g) => `<tr><td>${esc(g.type)}</td><td class="n">${g.count} waiting</td><td class="n"><label>Claim <input type="number" min="0" max="${g.count}" data-type="${esc(g.type)}" value="${esc(keep[g.type] ?? plan[g.type] ?? 0)}"></label> <button type="button" class="sec" data-set="max" data-type="${esc(g.type)}"${dis}>Max</button><button type="button" class="sec" data-set="none" data-type="${esc(g.type)}"${dis}>None</button></td></tr>`).join('');
         panel.innerHTML = `<b>Daily gifting</b> <span class="dim">${total} waiting${Number.isFinite(parsed.claimLeft) ? `, ${parsed.claimLeft} claims left today` : ''}</span>
           <table>${rows || '<tr><td>No gifts waiting.</td></tr>'}</table>
           <button type="button" data-act="both"${dis}>Claim &amp; send gifts</button><button type="button" class="sec" data-act="claim"${dis}>Claim only</button><button type="button" class="sec" data-act="send"${dis}>Send only</button>
+          <div class="dim">Set all: <button type="button" class="sec" data-set="best"${dis}>Fill to limit</button><button type="button" class="sec" data-set="allnone"${dis}>None</button></div>
           <div class="st" role="status">${esc(status)}</div>`;
         host.after(panel);
       };
@@ -864,26 +864,31 @@ const Panel = (() => {
 
       const wanted = () => Object.fromEntries([...document.querySelectorAll('#mhgd-panel input[data-type]')].map((i) => [i.dataset.type, Math.max(0, parseInt(i.value, 10) || 0)]));
 
-      // Accepts through the game's own Accept button (never "and Return"), oldest of each type first.
+      // Claiming is two steps in the game: each Accept only SELECTS the gift (it is queued in the dialog), and nothing is claimed
+      // until the confirm button ("Select Gifts" > Confirm) sends the whole batch in one request (read from the game's
+      // submitConfirm/submitGiftActions, 22 Nov 2026). So: select everything wanted at once (oldest of each type first, never
+      // "and Return"), confirm once, then check the game really dropped those gifts from the list.
+      const confirmBtn = (root) => [...root.querySelectorAll(`.${V}-action-confirm`)].find((b) => visible(b) && !/disabled/.test(b.className));
       const claim = async (root) => {
         const parsed = parseClaimTab(root);
         const want = wanted();
-        const gap = ctx.settings.get('clickGapMs');
         let left = Number.isFinite(parsed.claimLeft) ? parsed.claimLeft : Infinity;
-        let done = 0;
-        for (const g of parsed.groups) {
-          for (const r of g.rows.slice(0, Math.min(want[g.type] ?? 0, g.count))) {
-            if (left <= 0 || !ctx.alive()) break;
-            const before = num(q(root, 'numClaimActionsRemaining'));
-            r.accept.click();
-            const ok = await waitFor(() => !root.contains(r.el) || num(q(root, 'numClaimActionsRemaining')) < before);
-            if (!ok) return { done, error: `The game didn't confirm claiming ${g.type}. Stopped after ${done}.` };
-            done++; left--;
-            setStatus(`Claimed ${done}…`);
-            await sleep(gap);
-          }
-        }
-        return { done };
+        const picked = [];
+        for (const g of parsed.groups) for (const r of g.rows.slice(0, Math.min(want[g.type] ?? 0, g.count))) if (left > 0) { picked.push(r); left--; }
+        if (!picked.length) return { done: 0 };
+        picked.forEach((r) => { if (!r.accept.classList.contains('selected')) r.accept.click(); });
+        const chosen = picked.filter((r) => r.accept.classList.contains('selected'));
+        if (!chosen.length) return { done: 0, error: 'The game wouldn\'t select any gifts (claim limit reached?). Nothing was claimed.' };
+        const btn = await waitFor(() => confirmBtn(root), 4000);
+        if (!btn) return { done: 0, error: 'Gifts were selected but the confirm button never enabled. Nothing was claimed.' };
+        setStatus(`Claiming ${chosen.length} gifts…`);
+        btn.click();
+        const overlay = root.querySelector(`.${V}-confirmOverlay`);
+        if (await waitFor(() => visible(overlay), 2500)) { await sleep(200); overlay.querySelector(`.${V}-confirmPopup-submitConfirmButton`)?.click(); }
+        // Success = the game removed the claimed gifts from the list (it redraws from the server's reply).
+        const gone = await waitFor(() => chosen.every((r) => !r.el.isConnected), 20000);
+        if (!gone) return { done: 0, error: 'The game didn\'t confirm the claim, so nothing is counted as claimed. Check the dialog.' };
+        return { done: chosen.length, short: picked.length - chosen.length };
       };
 
       // ---- Sending: Send tab > Gift of the Day tile > friend tiles > Select Gifts (> Confirm) ----
@@ -926,14 +931,14 @@ const Panel = (() => {
 
       const run = async (mode) => {
         if (busy) return;
-        const root = dialog();
+        let root = dialog();
         if (!root) { setStatus('Open the Free Gifts dialog first.'); return; }
         busy = true;
         draw(root);
         document.querySelectorAll('#mhgd-panel button').forEach((b) => { b.disabled = true; });
         const parts = [];
         try {
-          if (mode !== 'send') { const r = await claim(root); parts.push(`Claimed ${r.done}.`); if (r.error) { parts.push(r.error); mode = 'claim'; } }
+          if (mode !== 'send') { const r = await claim(root); parts.push(`Claimed ${r.done}.`); root = dialog() || root; if (r.error) { parts.push(r.error); mode = 'claim'; } }
           if (mode !== 'claim' && (mode === 'send' || ctx.settings.get('sendAfterClaim'))) {
             const r = await send(root);
             parts.push(r.error ? r.error : `Sent to ${r.sent} of ${r.pool} friends (${r.skipped} skipped as they sent you a gift today).`);
@@ -957,7 +962,19 @@ const Panel = (() => {
       ctx.onStop(() => { mo.disconnect(); clearTimeout(timer); document.getElementById('mhgd-panel')?.remove(); document.querySelectorAll(`.${V}-claimableGift-friendContainer`).forEach((el) => { el.style.display = ''; }); });
       ctx.listen(document, 'click', (e) => {
         const b = e.target.closest?.('#mhgd-panel [data-act]');
-        if (b) { e.preventDefault(); run(b.dataset.act); }
+        if (b) { e.preventDefault(); run(b.dataset.act); return; }
+        const s = e.target.closest?.('#mhgd-panel [data-set]');
+        if (!s || busy) return;
+        e.preventDefault();
+        const parsed = parseClaimTab(dialog());
+        const best = planClaim(parsed.groups, parsed.claimLeft, ctx.settings.get('fillOrder'), values());
+        const left = (skip) => (Number.isFinite(parsed.claimLeft) ? parsed.claimLeft : Infinity) - Object.entries(wanted()).reduce((n, [t, v]) => n + (t === skip ? 0 : v), 0);
+        document.querySelectorAll('#mhgd-panel input[data-type]').forEach((i) => {
+          const g = parsed.groups.find((x) => x.type === i.dataset.type);
+          if (s.dataset.set === 'best') i.value = best[i.dataset.type] ?? 0;
+          else if (s.dataset.set === 'allnone') i.value = 0;
+          else if (i.dataset.type === s.dataset.type) i.value = s.dataset.set === 'none' ? 0 : Math.max(0, Math.min(g?.count ?? 0, left(i.dataset.type)));
+        });
       });
       scan();
 
