@@ -177,14 +177,17 @@ step("King's Reward solved with the OCR code, OCR worker released, page reloaded
 
 // 10. Daily Gifting: mock of the gifts dialog using the class names and data attributes read from the live game
 // (read-only, 14 Nov 2026). Mock only: the game's own click handlers and the final send confirmation are simulated.
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const ago = (h) => { const d = new Date(Date.now() - h * 36e5); return `${MON[d.getMonth()]} ${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }; // relative, so the test doesn't age
 const row = (id, name, sent) => `<div class="giftSelectorView-friendRow gift" data-snuid="${id}" data-sent="${sent}" data-is-daily="true"><div class="giftSelectorView-friendRow-sender"><div class="giftSelectorView-friend-name"><span>${name}</span><div class="giftSelectorView-friend-sent">${sent}</div></div></div><div class="giftSelectorView-friendRow-actionContainer"><a class="giftSelectorView-friendRow-action ignore">Ignore</a><a class="giftSelectorView-friendRow-action claim">Accept</a><a class="giftSelectorView-friendRow-action return">and Return</a></div></div>`;
 const grp = (t, rows) => `<div class="giftSelectorView-claimableGift expanded"><div class="giftSelectorView-claimableGift-titleContainer"><span class="giftSelectorView-claimableGift-title-itemName">${t} (${rows.length})</span></div><div class="giftSelectorView-claimableGift-friendContainer">${rows.join('')}</div></div>`;
 const GIFT_PAGE = PAGE.replace('<div id="mousehuntContainer">', `<div class="giftSelectorViewPopup"><div class="giftSelectorView">
 <div class="giftSelectorView-tabHeaderContainer"><a class="giftSelectorView-tabHeader active">Claim Free Gifts</a><a class="giftSelectorView-tabHeader" id="sendtab">Send Free Gifts</a></div>
 <div class="giftSelectorView-content-viewState selectClaimableGift"><div class="giftSelectorView-content-title">Select free gifts to claim!</div>
 <div class="giftSelectorView-content-subtitle">You can claim <span class="giftSelectorView-actionLimit giftSelectorView-numClaimActionsRemaining">3</span> more free gifts today.</div>
-${grp('Quantum Quartz', [row(1, 'Amy', 'Nov 14 09:51'), row(2, 'Bob', 'Nov 13 22:00'), row(3, 'Cat', 'Nov 14 01:00')])}
-${grp('Pollutinum', [row(4, 'Dan', 'Nov 14 02:00'), row(5, 'Eve', 'Nov 12 02:00')])}
+${grp('Quantum Quartz', [row(1, 'Amy', ago(1)), row(2, 'Bob', ago(30)), row(3, 'Cat', ago(5))])}
+${grp('Pollutinum', [row(4, 'Dan', ago(4)), row(5, 'Eve', ago(50))])}
+<a class="giftSelectorView-action-confirm disabled" id="cgo">Select Gifts</a>
 <div>You can claim more gifts in: 11 hours 18 minutes. Unclaimed regular gifts will expire in 7 days.</div></div>
 <div class="giftSelectorView-content-viewState selectGift" style="display:none"><div class="giftSelectorView-gift sendable gift gift_of_the_day" id="gotd">Quantum Quartz</div></div>
 <div class="giftSelectorView-content-viewState selectFriends" id="friendsview" style="display:none">You can send <span class="giftSelectorView-numSendActionsRemaining">25</span> more
@@ -197,12 +200,18 @@ await page.evaluate(GAME_STUBS);
 await page.evaluate(() => {
   localStorage.removeItem('mhs-settings-v1');
   localStorage.setItem('mh-gifting-prices-v1', JSON.stringify({ at: Date.now(), p: { 'quantum quartz': 800, pollutinum: 300 } }));
-  localStorage.setItem('mhs-settings-v1', JSON.stringify({ 'daily-gifting': { values: { clickGapMs: 100, explorePct: 0 } } }));
+  localStorage.setItem('mhs-settings-v1', JSON.stringify({ 'daily-gifting': { values: { explorePct: 0 } } }));
   window.__log = [];
   const $ = (s) => document.querySelector(s);
+  // Like the real game: Accept only SELECTS (limit enforced); nothing is claimed until Select Gifts > Confirm.
+  const sel = () => document.querySelectorAll('.giftSelectorView-friendRow-action.claim.selected');
   document.querySelectorAll('.giftSelectorView-friendRow-action.claim').forEach((a) => a.addEventListener('click', () => {
-    const r = a.closest('.giftSelectorView-friendRow'); window.__log.push('accept ' + r.querySelector('span').textContent); r.remove(); $('.giftSelectorView-numClaimActionsRemaining').textContent--;
+    if (a.classList.contains('selected')) a.classList.remove('selected');
+    else if (sel().length < Number($('.giftSelectorView-numClaimActionsRemaining').textContent)) a.classList.add('selected');
+    $('#cgo').classList.toggle('disabled', !sel().length);
+    window.__log.push('select ' + a.closest('.giftSelectorView-friendRow').querySelector('span').textContent);
   }));
+  $('#cgo').addEventListener('click', () => { if (!$('#cgo').classList.contains('disabled')) $('#ov').style.display = ''; });
   document.querySelectorAll('.giftSelectorView-friendRow-action.return').forEach((a) => a.addEventListener('click', () => window.__log.push('RETURN CLICKED')));
   for (const [id, n] of [[1, 'Amy'], [20, 'Zed'], [21, 'Yan'], [22, 'Xi'], [23, 'Wu']]) { const d = document.createElement('a'); d.className = 'giftSelectorView-friend'; d.dataset.snuid = id; d.innerHTML = '<div class="giftSelectorView-friend-name"><span>' + n + '</span></div>'; d.addEventListener('click', () => d.classList.toggle('selected')); $('#friends').append(d); }
   $('#sendtab').addEventListener('click', () => { document.querySelectorAll('.selectClaimableGift').forEach((e) => { e.style.display = 'none'; }); $('.selectGift').style.display = ''; });
@@ -210,7 +219,7 @@ await page.evaluate(() => {
   const upd = () => { const g = $('#go'); g.classList.toggle('disabled', !document.querySelector('.giftSelectorView-friend.selected')); };
   new MutationObserver(upd).observe($('#friends'), { subtree: true, attributes: true });
   $('#go').addEventListener('click', () => { if (!$('#go').classList.contains('disabled')) $('#ov').style.display = ''; });
-  $('#ok').addEventListener('click', () => { const s = [...document.querySelectorAll('.giftSelectorView-friend.selected span')].map((x) => x.textContent).sort(); window.__log.push('send ' + s.join(',')); $('.giftSelectorView-numSendActionsRemaining').textContent -= s.length; $('#ov').style.display = 'none'; });
+  $('#ok').addEventListener('click', () => { if (sel().length) { const names = [...sel()].map((a) => a.closest('.giftSelectorView-friendRow').querySelector('span').textContent); window.__log.push('claim ' + names.join(',')); sel().forEach((a) => a.closest('.giftSelectorView-friendRow').remove()); $('.giftSelectorView-numClaimActionsRemaining').textContent -= names.length; $('#cgo').classList.add('disabled'); $('#ov').style.display = 'none'; return; } const s = [...document.querySelectorAll('.giftSelectorView-friend.selected span')].map((x) => x.textContent).sort(); window.__log.push('send ' + s.join(',')); $('.giftSelectorView-numSendActionsRemaining').textContent -= s.length; $('#ov').style.display = 'none'; });
 });
 await page.addScriptTag({ content: script });
 await page.waitForSelector('#mhgd-panel');
@@ -219,12 +228,23 @@ const inputs = await page.locator('#mhgd-panel input[data-type]').evaluateAll((e
 assert.deepEqual(inputs, [['Quantum Quartz', '3'], ['Pollutinum', '0']]);
 assert.equal(await page.locator('.giftSelectorView-claimableGift-friendContainer').first().isHidden(), true); // senders hidden
 step('gifting panel groups by type, fills the claim limit by value, hides senders');
+// Quick buttons: None / Max per type, then Fill to limit
+await page.locator('#mhgd-panel [data-set=none][data-type="Quantum Quartz"]').click();
+assert.equal(await page.locator('#mhgd-panel input[data-type="Quantum Quartz"]').inputValue(), '0');
+await page.locator('#mhgd-panel [data-set=max][data-type="Pollutinum"]').click();
+assert.equal(await page.locator('#mhgd-panel input[data-type="Pollutinum"]').inputValue(), '2');
+await page.locator('#mhgd-panel [data-set=max][data-type="Quantum Quartz"]').click();
+assert.equal(await page.locator('#mhgd-panel input[data-type="Quantum Quartz"]').inputValue(), '1'); // limit 3, 2 already used by Pollutinum
+await page.locator('#mhgd-panel [data-set=allnone]').click();
+await page.locator('#mhgd-panel [data-set=best]').click();
+assert.deepEqual(await page.locator('#mhgd-panel input[data-type]').evaluateAll((els) => els.map((e) => e.value)), ['3', '0']);
+step('quick buttons: None, Max (capped by the daily limit), Fill to limit, None for all');
 await page.locator('#mhgd-panel [data-act=both]').click();
 await page.waitForFunction(() => window.__log.some((l) => l.startsWith('send')), null, { timeout: 20000 });
 const log = await page.evaluate(() => window.__log);
-assert.deepEqual(log.slice(0, 3), ['accept Bob', 'accept Cat', 'accept Amy']); // oldest first
+assert.deepEqual(log.slice(0, 4), ['select Bob', 'select Cat', 'select Amy', 'claim Amy,Bob,Cat']); // oldest first, all selected then ONE confirmed batch
 assert.ok(!log.includes('RETURN CLICKED'));
-assert.equal(log[3], 'send Wu,Xi,Yan,Zed'); // Amy sent today (snuid 1), so not sent to
+assert.equal(log[4], 'send Wu,Xi,Yan,Zed'); // Amy sent today (snuid 1), so not sent to
 const hist = await page.evaluate(() => JSON.parse(localStorage.getItem('mh-gifting-v1-4242')));
 assert.equal(hist.sent.length, 4);
 assert.ok(hist.resetAt > Date.now());

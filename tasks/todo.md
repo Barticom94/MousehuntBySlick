@@ -25,3 +25,9 @@ Behaviour changes versus the standalone scripts, all small:
 - [x] Mock test for the claim and send flow, and for the pure friend-picking logic
 - [ ] Live: the final send confirm (Select Gifts > Confirm) and the first real Claim & send run, by Adam
 - [ ] Friend last-active: the game's tiles carry no activity data; only used if MH Improved's "last active" sort link is present
+
+
+# Daily Gifting 1.1.1: claim fix
+- Root cause: Accept in the game's dialog only SELECTS a gift; the claim happens when "Claim N Gifts" > Confirm sends one batch. The old code clicked Accept per gift (waiting for the counter, which drops on select) and never confirmed, so nothing was claimed. The old mock removed the row on Accept, which hid this.
+- Fix: select all wanted gifts at once, confirm once, succeed only when the game removes those rows. Mock now behaves like the game. Quick Max / None / Fill to limit buttons added.
+- Live-checked read-only (22 Nov): Accept selects, row stays, confirm turns "Claim 1 Gifts". A real claim was not run.
