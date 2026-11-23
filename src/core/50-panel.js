@@ -49,6 +49,9 @@ const Panel = (() => {
     .status::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--ok); }
     .status[data-level=warn]::before { background: var(--warn); } .status[data-level=error]::before { background: var(--err); } .status[data-level=off]::before { background: var(--off); }
     .status[data-level=warn], .status[data-level=error] { color: var(--ink); }
+    .bar { height: 6px; margin-top: 6px; border: 1px solid var(--gold-edge); border-radius: 3px; overflow: hidden; }
+    .bar[hidden] { display: none; }
+    .bar span { display: block; height: 100%; width: 0; background: var(--gold-ink); transition: width .15s; }
     .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     .btn { padding: 4px 10px; border: 1px solid var(--gold-edge); border-radius: 6px; background: transparent; font-size: 12px; }
     .btn:hover { background: var(--gold); color: var(--on-gold); }
@@ -89,6 +92,12 @@ const Panel = (() => {
       const off = rec.state === 'off';
       el.dataset.level = off ? 'off' : rec.status.level;
       el.textContent = off ? 'Off' : rec.status.text;
+      const bar = el.nextElementSibling;
+      if (bar?.classList.contains('bar')) {
+        const p = off ? null : rec.progress;
+        bar.hidden = p == null;
+        if (p != null) { bar.firstChild.style.width = `${Math.round(p * 100)}%`; bar.setAttribute('aria-valuenow', String(Math.round(p * 100))); }
+      }
     };
 
     const field = (rec, spec) => {
@@ -129,6 +138,7 @@ const Panel = (() => {
       return h('div', { class: 'card', 'data-mod': def.id },
         h('div', { class: 'top' }, h('div', {}, h('h3', {}, def.name), h('p', {}, def.description)), sw),
         h('p', { class: 'status', 'data-status': def.id, role: 'status' }),
+        h('div', { class: 'bar', role: 'progressbar', 'aria-label': `${def.name} progress`, 'aria-valuemin': '0', 'aria-valuemax': '100', hidden: true }, h('span', {})),
         actions, settings);
     };
 

@@ -5,7 +5,7 @@
 //   - requires(): return a reason string when the module can't run on this page, else null/undefined.
 //   - init(ctx): start the feature. It may return { actions: [{ label, run }] } for buttons in the panel.
 //     Everything it registers through ctx (listeners, timers, styles) is removed when the module is switched off.
-// ctx: id, log, alive(), settings.get(key), setStatus(text, level), addStyle(css), every(fn, ms),
+// ctx: id, log, alive(), settings.get(key), setStatus(text, level), setProgress(0..1|null), addStyle(css), every(fn, ms),
 //      listen(target, type, fn, opts), onStop(fn).
 
 const MH = (() => {
@@ -26,6 +26,12 @@ const MH = (() => {
       setStatus(text, level = 'ok') {
         if (!alive) return;
         rec.status = { text, level };
+        emit('status', def.id);
+      },
+      /** Progress bar under the status line: 0..1, or null to hide it. */
+      setProgress(fraction) {
+        if (!alive) return;
+        rec.progress = fraction == null ? null : Math.max(0, Math.min(1, fraction));
         emit('status', def.id);
       },
       addStyle(css) {

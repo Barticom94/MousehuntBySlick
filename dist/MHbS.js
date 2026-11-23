@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MouseHunt Super Script
 // @namespace    adamh-mousehunt
-// @version      1.2.2
+// @version      1.2.3
 // @description  One script for MouseHunt with a control panel: Auto Horn & King's Reward solver, Loot Log, Gift Links, Map Invites. Built from modules in src/.
 // @author       Adam Harley (Auto Horn & KR Solver: Slick, fork of daniellok)
 // @license      MIT
@@ -24,7 +24,7 @@
 // ---- core/10-util.js ----
 // Small helpers shared by the core and every module. Core files share one scope; module files are block-scoped.
 
-const MH_VERSION = '1.2.2'; // replaced by build.mjs from package.json
+const MH_VERSION = '1.2.3'; // replaced by build.mjs from package.json
 
 const DAY = 864e5;
 const MIN = 6e4;
@@ -101,7 +101,7 @@ const Settings = (() => {
 //   - requires(): return a reason string when the module can't run on this page, else null/undefined.
 //   - init(ctx): start the feature. It may return { actions: [{ label, run }] } for buttons in the panel.
 //     Everything it registers through ctx (listeners, timers, styles) is removed when the module is switched off.
-// ctx: id, log, alive(), settings.get(key), setStatus(text, level), addStyle(css), every(fn, ms),
+// ctx: id, log, alive(), settings.get(key), setStatus(text, level), setProgress(0..1|null), addStyle(css), every(fn, ms),
 //      listen(target, type, fn, opts), onStop(fn).
 
 const MH = (() => {
@@ -122,6 +122,12 @@ const MH = (() => {
       setStatus(text, level = 'ok') {
         if (!alive) return;
         rec.status = { text, level };
+        emit('status', def.id);
+      },
+      /** Progress bar under the status line: 0..1, or null to hide it. */
+      setProgress(fraction) {
+        if (!alive) return;
+        rec.progress = fraction == null ? null : Math.max(0, Math.min(1, fraction));
         emit('status', def.id);
       },
       addStyle(css) {
@@ -309,6 +315,9 @@ const Panel = (() => {
     .status::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--ok); }
     .status[data-level=warn]::before { background: var(--warn); } .status[data-level=error]::before { background: var(--err); } .status[data-level=off]::before { background: var(--off); }
     .status[data-level=warn], .status[data-level=error] { color: var(--ink); }
+    .bar { height: 6px; margin-top: 6px; border: 1px solid var(--gold-edge); border-radius: 3px; overflow: hidden; }
+    .bar[hidden] { display: none; }
+    .bar span { display: block; height: 100%; width: 0; background: var(--gold-ink); transition: width .15s; }
     .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     .btn { padding: 4px 10px; border: 1px solid var(--gold-edge); border-radius: 6px; background: transparent; font-size: 12px; }
     .btn:hover { background: var(--gold); color: var(--on-gold); }
@@ -349,6 +358,12 @@ const Panel = (() => {
       const off = rec.state === 'off';
       el.dataset.level = off ? 'off' : rec.status.level;
       el.textContent = off ? 'Off' : rec.status.text;
+      const bar = el.nextElementSibling;
+      if (bar?.classList.contains('bar')) {
+        const p = off ? null : rec.progress;
+        bar.hidden = p == null;
+        if (p != null) { bar.firstChild.style.width = `${Math.round(p * 100)}%`; bar.setAttribute('aria-valuenow', String(Math.round(p * 100))); }
+      }
     };
 
     const field = (rec, spec) => {
@@ -389,6 +404,7 @@ const Panel = (() => {
       return h('div', { class: 'card', 'data-mod': def.id },
         h('div', { class: 'top' }, h('div', {}, h('h3', {}, def.name), h('p', {}, def.description)), sw),
         h('p', { class: 'status', 'data-status': def.id, role: 'status' }),
+        h('div', { class: 'bar', role: 'progressbar', 'aria-label': `${def.name} progress`, 'aria-valuemin': '0', 'aria-valuemax': '100', hidden: true }, h('span', {})),
         actions, settings);
     };
 
@@ -1963,6 +1979,7 @@ const Panel = (() => {
 // One click invites as many friends as the treasure map has open slots, using the game's own endpoints
 // (hg.utils.User.getFriends for the friend list, hg.utils.TreasureMapUtil.getMapInfo / sendInvites for the map),
 // in a single request instead of ticking names in the invite dialog.
+// A progress bar in the panel tracks the batches.
 // Not capped at the open slots: it invites every eligible friend so the slots fill as fast as possible.
 // Everything goes through ajax calls in the background; no dialog or page element is touched.
 {
@@ -2016,25 +2033,25 @@ const Panel = (() => {
           const { slots, ids } = pickInvitees(friends, map, hg.utils.TreasureMapUtil.getFavouriteFriends());
           if (!ids.length) { ctx.setStatus(`No friends left to invite (all friends are already on the map or invited)`, 'warn'); return; }
           ctx.setStatus(`Inviting ${ids.length}...`);
-          // One request for everyone. If the server turns that down (a size limit), retry in smaller batches.
+          // Batches of 25, so the bar moves and a server-side size limit can't sink the whole run.
+          const BATCH = 25;
           let sent = 0;
-          for (const size of [ids.length, 100, 25]) {
-            if (size > ids.length && size !== 100 && size !== 25) continue;
-            try {
-              for (let i = sent; i < ids.length; i += size) {
-                const res = await call(hg.utils.TreasureMapUtil.sendInvites, mapId, ids.slice(i, i + size));
-                if (res && res.success === false) throw new Error('refused');
-                sent = Math.min(ids.length, i + size);
-              }
-              break;
-            } catch (e) { ctx.log.warn('invite batch failed at size', size, e); }
-          }
+          ctx.setProgress(0);
+          try {
+            for (let i = 0; i < ids.length; i += BATCH) {
+              const res = await call(hg.utils.TreasureMapUtil.sendInvites, mapId, ids.slice(i, i + BATCH));
+              if (res && res.success === false) throw new Error('refused');
+              sent = Math.min(ids.length, i + BATCH);
+              ctx.setProgress(sent / ids.length);
+              ctx.setStatus(`Inviting ${sent} of ${ids.length}...`);
+            }
+          } catch (e) { ctx.log.warn('invite batch failed', e); }
           if (!sent) throw new Error('the game refused the invites');
           ctx.setStatus(`Invited ${sent} friends to ${map.name} (${slots} open slot${slots === 1 ? '' : 's'}${sent < ids.length ? `, ${ids.length - sent} not sent` : ''})`);
         } catch (e) {
           ctx.log.warn(e);
           ctx.setStatus(`Invites failed: ${e?.message || e}`, 'warn');
-        } finally { busy = false; }
+        } finally { busy = false; setTimeout(() => ctx.setProgress(null), 4000); }
       };
 
       return { actions: [{ label: 'Invite max friends to my map', run }] };

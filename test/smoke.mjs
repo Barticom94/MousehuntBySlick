@@ -296,8 +296,9 @@ await panel('.launcher').click();
 await panel('[data-mod=map-invites] .actions .btn').click();
 await page.waitForFunction(() => window.__sent.length === 1);
 assert.deepEqual(await page.evaluate(() => window.__sent), [[77, ['x1', 'x2']]]);
+assert.equal(await panel('[data-mod=map-invites] .bar').getAttribute('aria-valuenow'), '100');
 assert.match(await panel('[data-status=map-invites]').textContent(), /Invited 2 friends to Test Map \(1 open slot\)/);
-step('map invites invites every eligible friend in one request, beyond the open slots');
+step('map invites invites every eligible friend in batches, beyond the open slots');
 
 assert.deepEqual(errors, []);
 await browser.close();
